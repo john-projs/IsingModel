@@ -12,12 +12,10 @@ using namespace std;
 int getSuperIndex(int row, int col, const int L) {
   if (row < 0 || row >= L) {
     return -1;
-  }
-  else if (col < 0 || col == (row*L - 1) || col == (row*L + L)) {
+  } else if (col < 0 || col >= L) {
     return -1;
-  }
-  else {
-    return row*L + col;
+  } else {
+    return row * L + col;
   }
 }
 
@@ -30,43 +28,24 @@ double drawRandomNumber(random_device rd) {
 vector<vector<int>> init(vector<vector<int>> neighbourArray, const int L) {
   for (int row = 0; row < L; row++) {
     for (int col = 0; col < L; col++) {
-        int index = getSuperIndex(row, col, L);
-        vector<int> neighbours;
-        neighbours.push_back(getSuperIndex(row - 1, col, L));
-        neighbours.push_back(getSuperIndex(row + 1, col, L));
-        neighbours.push_back(getSuperIndex(row, col - 1, L));
-        neighbours.push_back(getSuperIndex(row, col + 1, L));
-        neighbours.erase(remove(neighbours.begin(), neighbours.end(), -1), neighbours.end());
-        neighbourArray.push_back(neighbours);
-        cout << "POINT AT (ROW, COL): (" << row << ", " << col << ")" << endl; 
-        for (int i: neighbours) {
-            cout << i << ", ";
-        }
-        cout << endl;
-        // neighbourArray[index][0] = getSuperIndex(row - 1, col, L);
-        // neighbourArray[index][1] = getSuperIndex(row + 1, col, L);
-        // neighbourArray[index][2] = getSuperIndex(row, col - 1, L);
-        // neighbourArray[index][3] = getSuperIndex(row, col + 1, L);
-        // cout << neighbourArray[index][0] << ",";
-        // cout << neighbourArray[index][1] << ",";
-        // cout << neighbourArray[index][2] << ",";
-        // cout << neighbourArray[index][3] << endl;
-        // neighbourArray[index].erase(remove(neighbourArray[index].begin(),
-        //                                 neighbourArray[index].end(), -1),
-        //                                 neighbourArray[index].end());
-        // cout << neighbourArray[index][0] << ",";
-        // cout << neighbourArray[index][1] << ",";
-        // cout << neighbourArray[index][2] << ",";
-        // cout << neighbourArray[index][3] << endl;
+      int index = getSuperIndex(row, col, L);
+      vector<int> neighbours;
+      neighbours.push_back(getSuperIndex(row - 1, col, L));
+      neighbours.push_back(getSuperIndex(row + 1, col, L));
+      neighbours.push_back(getSuperIndex(row, col - 1, L));
+      neighbours.push_back(getSuperIndex(row, col + 1, L));
+      neighbours.erase(remove(neighbours.begin(), neighbours.end(), -1),
+                       neighbours.end());
+      neighbourArray.push_back(neighbours);
     }
   }
   return neighbourArray;
 }
 
-double delta_H(vector<int> latticeSpin, vector<vector<int>> neighbourArray,
+double delta_H(vector<int> latticeSpin, vector<int> neighbours,
                int latticePoint) {
   double spinProduct = 0;
-  for (int neighbour : neighbourArray[latticePoint]) {
+  for (int neighbour : neighbours) {
     spinProduct += latticeSpin[latticePoint] * latticeSpin[neighbour];
   }
   return -1 * spinProduct;
@@ -91,13 +70,13 @@ vector<int> updateLattice(vector<int> latticeSpin,
   uniform_int_distribution<> dis_int(0, latticeSpin.size() - 1);
   uniform_real_distribution<> dis_real(0, 1);
   // pick position in lattice randomly and flip spin, L**2 times
-  for (int i = 0; i < pow(latticeSpin.size(), 2); i++) {
+  for (int i = 0; i < latticeSpin.size(); i++) {
     int latticePoint = dis_int(gen);
     latticeSpin[latticePoint] *= -1;
-
+    vector<int> neighbours = neighbourArray[latticePoint];
     // calculate delta H
     int E;
-    E = delta_H(latticeSpin, neighbourArray, latticePoint);
+    E = delta_H(latticeSpin, neighbours, latticePoint);
 
     // acceptance step
     if (E >= 0) {
@@ -111,13 +90,12 @@ vector<int> updateLattice(vector<int> latticeSpin,
 }
 
 void generate() {
-  const int N = 2;
-  const int Nskip = 1;
-  const int L = 4;
+  const int N = 10000;
+  const int Nskip = 100;
+  const int L = 30;
   const double betaLower = 0.1;
   const double betaUpper = 0.9;
   const double betaStep = 0.001;
-  // double beta = 0.5;
   const int NThermal = 20;
   const int coldStart = 1;
   // initialize lattice vectors
@@ -125,35 +103,38 @@ void generate() {
 
   vector<vector<int>> neighbourArray(L * L, vector<int>(4, 0));
 
+  // Open Magnetisation File
+  ofstream outFile;
+  outFile.open("../data/magnetization/magnetization.csv");
+  outFile << "magnetisation, beta" << endl;
   neighbourArray = init(neighbourArray, L);
-  for (double beta = betaLower; beta <= betaUpper; beta += betaStep) {
-    cout << "beta: " << beta << endl;
-    vector<vector<int>> latticeSpinData;
-    vector<double> magnetization;
-    for (int i = 0; i <= N; i++) {
-      latticeSpin = updateLattice(latticeSpin, neighbourArray, beta);
-      if (i % Nskip == 0) {
-        double M = getMagnetisation(latticeSpin);
-        magnetization.push_back(M);
-        latticeSpinData.push_back(latticeSpin);
-        cout << "i: " << Nskip << endl;
+  if (outFile.is_open()) {
+    for (double beta = betaLower; beta <= betaUpper; beta += betaStep) {
+      cout << "beta: " << beta << endl;
+      vector<vector<int>> latticeSpinData;
+      vector<double> magnetization;
+      for (int i = 0; i <= N; i++) {
+        latticeSpin = updateLattice(latticeSpin, neighbourArray, beta);
+        if (i % Nskip == 0) {
+          double M = getMagnetisation(latticeSpin);
+          magnetization.push_back(M);
+          latticeSpinData.push_back(latticeSpin);
+          cout << "i: " << i << endl;
+        }
       }
-    }
-    // Writing Magnetisation File
-    ofstream outFile;
-    outFile.open("../data/magnetization" + to_string(beta * 1000) + ".txt");
-    if (outFile.is_open()) {
+
       for (double i : magnetization) {
-        outFile << i << ", ";
+        outFile << i << ", " << beta << endl;
       }
-    } else {
-      cout << "Error opening file." << endl;
     }
-    outFile.close();
   }
+  else {
+    cout << "Error opening file." << endl;
+  }
+  outFile.close();
 }
 
-int main() {
-  generate();
-  return 0;
-}
+  int main() {
+    generate();
+    return 0;
+  }
