@@ -2,12 +2,39 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
+#include <omp.h>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
 
 using namespace std;
+
+struct data_row {
+  float magnetization;
+  float beta;
+  int i;
+};
+
+bool comparebyItr(const data_row &r1, const data_row &r2) {
+  if (r1.beta < r2.beta) {
+    return true;
+  }
+  if (r2.beta < r1.beta) {
+
+    return false;
+  }
+  if (r1.i < r2.i) {
+
+    return true;
+  }
+  if (r2.i < r1.i) {
+
+    return false;
+  }
+  return false;
+}
 
 int getSuperIndex(int row, int col, const int L) {
   if (row < 0 || row >= L) {
@@ -19,10 +46,22 @@ int getSuperIndex(int row, int col, const int L) {
   }
 }
 
-double drawRandomNumber(random_device rd) {
-  mt19937 gen(rd());
-  uniform_real_distribution<> dis(0.0, 1.0);
-  return dis(gen);
+double drawRandomFloat() {
+  static mt19937 gen_real = []() {
+    random_device rd;
+    return mt19937(rd());
+  }();
+  uniform_real_distribution<float> dis(0, 1);
+  return dis(gen_real);
+}
+
+double drawRandomInt() {
+  static mt19937 gen_int = []() {
+    random_device rd;
+    return mt19937(rd());
+  }();
+  uniform_int_distribution dis(0, 899);
+  return dis(gen_int);
 }
 
 vector<vector<int>> init(vector<vector<int>> neighbourArray, const int L) {
@@ -42,99 +81,119 @@ vector<vector<int>> init(vector<vector<int>> neighbourArray, const int L) {
   return neighbourArray;
 }
 
-double delta_H(vector<int> latticeSpin, vector<int> neighbours,
-               int latticePoint) {
-  double spinProduct = 0;
+int delta_H(vector<int> &latticeSpin, int &latticePointSpin,
+               vector<int> &neighbours, int &latticePoint) {
+  int spinProduct = 0;
   for (int neighbour : neighbours) {
-    spinProduct += latticeSpin[latticePoint] * latticeSpin[neighbour];
+    spinProduct += latticePointSpin * latticeSpin[neighbour];
   }
   return -1 * spinProduct;
 }
 
-double pSwitch(double E, double beta) {
-  return exp(-E * beta);
-}
+float pSwitch(int &E, float &beta) { return exp(-E * beta); }
 
-double getMagnetisation(vector<int> latticeSpin) {
-  double M = 0.0;
+float getMagnetisation(vector<int> &latticeSpin) {
+  float M = 0.0;
   for (int i : latticeSpin) {
     M += i;
   }
   return M = M / (latticeSpin.size() * latticeSpin.size());
 }
 
-vector<int> updateLattice(vector<int> latticeSpin,
-                          vector<vector<int>> neighbourArray, double beta) {
-  random_device rd;
-  mt19937 gen(rd());
-  uniform_int_distribution<> dis_int(0, latticeSpin.size() - 1);
-  uniform_real_distribution<> dis_real(0, 1);
+int getLocation(int kbeta, int i, const int N, const int Nskip) {
+  return ((kbeta - 100) * N + i) / Nskip;
+}
+
+void updateLattice(vector<int> &latticeSpin,
+                   vector<vector<int>> &neighbourArray, float &beta,
+                   int &latticeSpinLength) {
   // pick position in lattice randomly and flip spin, L**2 times
-  for (int i = 0; i < latticeSpin.size(); i++) {
-    int latticePoint = dis_int(gen);
+  for (int i = 0; i < latticeSpinLength; i++) {
+      // draw random float and convert to lattice point
+    float random_num = drawRandomFloat();
+    int latticePoint = random_num * (latticeSpinLength - 1);
+
+    // flip random point in lattice and find its neighbours
     latticeSpin[latticePoint] *= -1;
-    vector<int> neighbours = neighbourArray[latticePoint];
+
     // calculate delta H
-    int E;
-    E = delta_H(latticeSpin, neighbours, latticePoint);
+    int E = delta_H(latticeSpin, latticeSpin[latticePoint],
+                    neighbourArray[latticePoint], latticePoint);
 
     // acceptance step
     if (E >= 0) {
-      double acceptance_ratio = pSwitch(E, beta);
-      if (dis_real(gen) > acceptance_ratio) {
+      if (random_num > pSwitch(E, beta)) {
         latticeSpin[latticePoint] *= -1;
       }
     }
   }
-  return latticeSpin;
+  return;
 }
 
 void generate() {
   const int N = 10000;
   const int Nskip = 100;
   const int L = 30;
-  const double betaLower = 0.1;
-  const double betaUpper = 0.9;
-  const double betaStep = 0.001;
+  const int betaLower = 100;
+  const int betaUpper = 900;
+  const int betaStep = 1;
   const int NThermal = 20;
   const int coldStart = 1;
-  // initialize lattice vectors
-  vector<int> latticeSpin((L * L), coldStart);
 
-  vector<vector<int>> neighbourArray(L * L, vector<int>(4, 0));
+  // create result vector
+  int vector_size = (N / Nskip) * (betaUpper - betaLower) + Nskip + 1;
+  cout << vector_size << endl;
+  vector<data_row> results(vector_size);
 
-  // Open Magnetisation File
-  ofstream outFile;
-  outFile.open("../data/magnetization/magnetization.csv");
-  outFile << "magnetisation, beta" << endl;
-  neighbourArray = init(neighbourArray, L);
-  if (outFile.is_open()) {
-    for (double beta = betaLower; beta <= betaUpper; beta += betaStep) {
-      cout << "beta: " << beta << endl;
-      vector<vector<int>> latticeSpinData;
-      vector<double> magnetization;
-      for (int i = 0; i <= N; i++) {
-        latticeSpin = updateLattice(latticeSpin, neighbourArray, beta);
-        if (i % Nskip == 0) {
-          double M = getMagnetisation(latticeSpin);
-          magnetization.push_back(M);
-          latticeSpinData.push_back(latticeSpin);
-          cout << "i: " << i << endl;
-        }
-      }
+#pragma omp parallel for
+  for (int kbeta = betaLower; kbeta <= betaUpper; kbeta += betaStep) {
+    // convert kbeta to beta
+    float beta = kbeta / 1000.0;
+    cout << "beta: " << beta << '\n';
 
-      for (double i : magnetization) {
-        outFile << i << ", " << beta << endl;
+    // initialize lattice vectors
+    int latticeSpinLength = L * L;
+    vector<int> latticeSpin((latticeSpinLength), coldStart);
+    vector<vector<int>> neighbourArray(latticeSpinLength, vector<int>(4, 0));
+    neighbourArray = init(neighbourArray, L);
+
+    // main monte carlo simulation
+    for (int i = 0; i <= N; i++) {
+      updateLattice(latticeSpin, neighbourArray, beta, latticeSpinLength);
+      if (i % Nskip == 0) {
+        data_row row;
+        row.magnetization = getMagnetisation(latticeSpin);
+        row.beta = beta;
+        row.i = i;
+        int vec_loc = getLocation(kbeta, i, N, Nskip);
+        results[vec_loc] = row;
       }
     }
   }
-  else {
-    cout << "Error opening file." << endl;
+  cout << "Ising Model Calculations Complete"
+       << "\n";
+
+  // sort beta results vector
+  std::sort(results.begin(), results.end(), comparebyItr);
+
+  // Open Magnetisation File
+  ofstream outFile;
+  outFile.open("data/magnetization/magnetization.csv");
+
+  if (!outFile.is_open()) {
+    throw exception("Error opening file");
+  } else {
+    cout << "Writing file";
+    // write contents of results vector to csv
+    outFile << "magnetisation, beta, index" << '\n';
+    for (data_row row : results) {
+      outFile << row.magnetization << ", " << row.beta << ", " << row.i << "\n";
+    }
   }
   outFile.close();
 }
 
-  int main() {
-    generate();
-    return 0;
-  }
+int main() {
+  generate();
+  return 0;
+}
